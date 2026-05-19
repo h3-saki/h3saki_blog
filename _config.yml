@@ -101,7 +101,7 @@ service-worker: true
 # Friends
 friends: [
   {
-    title:"YuanFeng"
+    title:"YuanFeng",
     herf: "https://github.com/maxj2025"
-}
+  }
 ]
