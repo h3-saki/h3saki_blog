@@ -1,0 +1,154 @@
+---
+share: true
+title: Arch中的一些体验小优化
+subtitle: 雾凇拼音,微信,nvim与网络驱动
+date: 2026-05-19
+layout: post
+author: Saki酱的通信学习之路
+header-img: img/post-bg-2015.jpg
+catalog: true
+tags:
+  - Arch
+  - niri
+  - 系统优化
+---
+### 1.雾凇拼音部分符号输出为英文标点
+在写md，latex等文件时要不停切换中英文标点，非常的麻烦，所以干脆在配置文件中自定义`half_shape`标点映射自行更换
+在`~/.local/share/fcitx5/rime/rime_ice.custom.yaml`添加以下段落
+```yaml
+punctuator/half_shape:
+	"¥": "$" # 人民币符号 -> 美元符
+	
+	"「": "{"
+	
+	"」": "}"
+	
+	"【": "["
+	
+	"】": "]"
+	
+	"·": "`" # 间隔号 -> 反引号
+	
+	"、": "\\" # 顿号 -> 反斜杠
+	
+	"～": "~"
+```
+重启fcitx即可. 这种方案本质上是替换了rime输入法输出的符号,所以在日常输入中,被替换的这些符号也会保持英文标点的状态.这点需要注意.
+### 2. 微信无法粘贴图片
+微信的剪贴板bug也是老生常谈的问题,这里ai推荐我使用wl-copy写一个脚本,安装脚本后,部分解决问题
+先安装`wl-paste`和`wl-copy`
+```bash
+yay -S wl-clipboard
+```
+再看看`~/.local/bin`是否存在
+```bash
+mkdir -p ~/.local/bin
+```
+然后
+```bash
+vim ~/.local/bin/wx-clip-fix.sh
+```
+写入以下脚本
+```bash
+#!/bin/bash
+# 依赖: wl-clipboard (确保已安装 wl-paste 和 wl-copy)
+wl-paste --watch bash -c '
+    # 避免无限循环：仅当内容是纯文本才处理
+    if wl-paste -n --list-types | grep -q "text/plain"; then
+        clip=$(wl-paste -n)
+        # 匹配微信/QQ的临时图片路径
+        if [[ "$clip" == file://*/WeChat_Data/*\.jpg ]] || [[ "$clip" == file://*/WeChat_Data/*\.png ]]; then
+            filepath=$(echo "$clip" | sed "s/^file:\/\///")
+            if [ -f "$filepath" ]; then
+                # 重新作为图片写入剪贴板，打断原有 MIME
+                mime=$(file --mime-type -b "$filepath")
+		        wl-copy -t "$mime" < "$filepath" 
+                # 可选：通知反馈 (需要安装 libnotify)
+                # notify-send "Clipboard" "已转换微信图片为原生格式"
+            fi
+        fi
+    fi
+'
+```
+在niri配置文件中添加`spawn-at-startup`
+```
+spawn-at-startup "~/.local/bin/wx-clip-fix.sh"
+```
+这样就可以粘贴微信的图片到其他软件了(浏览器,word等),如果想要粘贴图片到微信,有两种办法
+1.由于arch版微信的沙箱机制,需要用以下方法和微信共享文件
+```bash
+env _portableConfig=com.qq.weixin PORTABLE_CONF=com.qq.weixin /usr/bin/portable --actions share-files
+```
+这里选择你需要共享的图片即可
+2.如果觉得输命令太麻烦,这里还有一种小巧思:因为虽然可以把qq设置为wayland,但是qq这里也是残废。它只能读取我们的剪贴板中的图片,不能复制自己的图片到剪贴板。但是qq与微信之间可以互相复制和粘贴图片,所以完全可以把自己的图片发到qq之后再复制到微信。
+
+### 3.nvim无法在文件管理器中拉起
+这个原因是nvim是一个命令行工具,诸如nemo等文件管理器双击后尝试运行nvim时不会拉起终端,导致启动失败
+先查看`nvim.desktop`
+```bash
+cp /usr/share/applications/nvim.desktop ~/.local/share/applications
+vim ~/.local/share/applications/nvim.desktop
+```
+输入指令`/`打开查找模式,寻找`Termianl`段,确保
+```
+Terminal=true
+```
+之后,再配置dbus操作
+```bash
+# 安装 (Arch 官方源就有)
+sudo pacman -S xdg-terminal-exec
+
+# 编辑你的 niri 环境变量文件，追加 TERMINAL
+echo 'TERMINAL=kitty' >> ~/.config/environment.d/10-wayland.conf
+
+# 让当前 dbus session 立即感知
+dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP LANG TERMINAL
+
+# 清理旧的 dbus 缓存
+systemctl --user daemon-reload
+```
+
+### 4. 浏览器拉起的部分界面是英文,且无法拉起输入法
+这是niri和系统设置的原因,简单更改下配置文件即可解决
+```bash
+mkdir -p ~/.config/environment.d
+vim ~/.config/environment.d/10-wayland.conf
+```
+加入以下内容
+```
+LANG=zh_CN.UTF-8
+LC_ALL=zh_CN.UTF-8
+XMODIFIERS=@im=fcitx
+GTK_IM_MODULE=fcitx
+QT_IM_MODULE=fcitx
+SDL_IM_MODULE=fcitx
+GLFW_IM_MODULE=ibus
+```
+
+### 5. 键鼠web驱动无法访问
+现在很多键鼠驱动都有web驱动,但是在linux下会发现,chrome能够找到对应设备,却没有办法在web页面调整鼠标键盘的参数。
+解决办法也很简单
+```bash
+lsusb
+```
+先`lsusb`一下,看一下自己的USB设备(这里假设是2.4G/有线连接,蓝牙管理没试过)。找到自己的设备(这里以迈从a7为例)
+```bash
+Bus 005 Device 002: ID 5253:1021 RealTek MCHOSE A7
+Bus 005 Device 003: ID 3151:4011 ROYUAN 2.4G Wireless Keyboard
+```
+可以看到,有一串ID `aaaa:bbbb`的序列, 记住它
+然后编辑udev规则,对chrome的WebHID API进行授权
+```bash
+sudo vim /etc/udev/rules.d/50-keyboard-mouse-webhid.rules
+```
+每一个设备插入一行
+```bash
+KERNEL=="hidraw*", ATTRS{idVendor}=="aaaa", ATTRS{idProduct}=="bbbb", MODE="0666", TAG+="uaccess"
+```
+这里`idVendor`填之前lsusb读取到的ID冒号前面的数字,`idProduct`填冒号后面那个数字。每有一个设备就要写一行,比如我想要通过网页驱动管理我的鼠标,键盘我就需要写两行
+保存完后,重载udev规则,并且重新插拔一下键鼠的无线接收器
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+操作完之后,web驱动就可以正常管理设备了.
