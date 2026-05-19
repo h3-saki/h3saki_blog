@@ -1,11 +1,11 @@
 # Site settings
 title: 高三小祥的博客
-SEOTitle: 高三小祥的博客 | H3Saki Blog
+SEOTitle: 高三小祥的博客 | Saki酱的通信学习之路
 header-img: img/post-bg-desk.jpg
 email: minecraftchiang@foxmail.com
-description: "KiraKira DokiDoki."
-keyword: "H3Saki, H3Saki Blog, 高三小祥的博客, jmc0x68, Signal, 信号系统, DSP, 数字信号处理, FPGA"
-url: "https://jmc0x68.github.io"          # your host, for absolute URL
+description: "一些自己在学习信号系统,数字信号处理,FPGA中的心得和感想"
+keyword: "Signal, 信号系统, DSP, 数字信号处理, FPGA, 技术博客, H3Saki, 高三小祥, 高三小祥的博客, H3Saki Blog"
+url: "https://blog.05262025.xyz"          # your host, for absolute URL
 baseurl: ""      # for example, '/blog' if your blog hosted on 'host/blog'
 github_repo: "https://github.com/qiubaiying/qiubaiying.github.io.git" # you code repository
 
@@ -17,7 +17,7 @@ sidebar-avatar: /img/about-BY-gentle.jpg      # use absolute URL, seeing it's us
 
 
 # SNS settings
-RSS: false
+RSS: true
 # weibo_username:     qiubaiying
 zhihu_username:     jmc0x68
 github_username:    jmc0x68
@@ -40,7 +40,7 @@ anchorjs: true                          # if you want to customize anchor. check
 
 # Gems
 # from PR#40, to support local preview for Jekyll 3.0
-gems: [jekyll-paginate]
+plugins: [jekyll-paginate, jekyll-sitemap]
 
 
 
@@ -79,8 +79,8 @@ gitalk:
 #ba_track_id: b50bf2b12b5338a1845e33832976fd68
 
 # Google Analytics
-#ga_track_id: 'UA-90855596-1'            # Format: UA-xxxxxx-xx
-ga_domain: auto               # 默认的是 auto, 这里我是自定义了的域名，你如果没有自己的域名，需要改成auto
+ga_track_id: 'G-QZ4EL10VMM'            # Format: UA-xxxxxx-xx
+ga_domain: blog.05262025.xyz               # 默认的是 auto, 这里我是自定义了的域名，你如果没有自己的域名，需要改成auto
 
 
 
@@ -100,4 +100,8 @@ service-worker: true
 
 # Friends
 friends: [
+  {
+    title:"YuanFeng"
+    herf: "https://github.com/maxj2025"
+}
 ]
