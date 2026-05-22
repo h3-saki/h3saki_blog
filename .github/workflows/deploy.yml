@@ -31,14 +31,14 @@ jobs:
             -not -path "./img/*" -not -path "./_site/*" -not -path "./vendor/*" \
             -exec mogrify -quality 90 {} \; 2>/dev/null || true
 
-      - name: Setup Ruby
-        uses: ruby/setup-ruby@v1
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v2
         with:
-          ruby-version: '3.1'
-          bundler-cache: true
+          hugo-version: 'latest'
+          extended: true
 
-      - name: Build Jekyll site
-        run: bundle exec jekyll build
+      - name: Build Hugo site
+        run: hugo --minify
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -49,6 +49,6 @@ jobs:
         env:
           EDGEONE_API_TOKEN: ${{ secrets.EDGEONE_API_TOKEN }}
         run: |
-          npx edgeone pages deploy ./_site \
+          npx edgeone pages deploy ./public \
             -n "h3-saki-blog" \
             -t "$EDGEONE_API_TOKEN"
