@@ -21,6 +21,8 @@ minify:
 # 参考: https://gohugo.io/content-management/mathematics/
 markup:
   goldmark:
+    renderer:
+      unsafe: true
     extensions:
       passthrough:
         enable: true
@@ -58,7 +60,7 @@ params:
   # 头像 + 侧边栏（homeInfo mode）
   homeInfoParams:
     Title: "高三小祥的博客"
-    Content: "Just do it."
+    Content: "我们终将会死，所以我们的人生目标不该是长命百岁，而应该做点自己想做的"
 
   # 侧边栏头像
   label:
