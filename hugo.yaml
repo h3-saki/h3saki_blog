@@ -1,0 +1,97 @@
+baseURL: "https://blog.05262025.xyz/"
+title: "高三小祥的博客"
+paginate: 5
+theme: "PaperMod"
+
+enableRobotsTXT: true
+buildDrafts: false
+buildFuture: false
+buildExpired: false
+
+# 关键：Hugo 原生 GA4 支持
+services:
+  googleAnalytics:
+    id: G-QZ4EL10VMM
+
+minify:
+  disableXML: true
+  minifyOutput: true
+
+# ===== KaTeX 全局数学渲染 =====
+# 参考: https://gohugo.io/content-management/mathematics/
+markup:
+  goldmark:
+    extensions:
+      passthrough:
+        enable: true
+        delimiters:
+          block:
+            - ['\[', '\]']
+            - ['$$', '$$']
+          inline:
+            - ['$', '$']
+  highlight:
+    noClasses: false
+
+params:
+  env: production
+  title: "高三小祥的博客"
+  description: "Just do it."
+  keywords: [Blog]
+  author: "高三小祥"
+  DateFormat: "2006-01-02"
+  defaultTheme: auto
+  disableThemeToggle: false
+
+  # 全局开启 KaTeX（每篇文章无需单独设 math: true）
+  math: true
+
+  ShowReadingTime: true
+  ShowShareButtons: false
+  ShowPostNavLinks: true
+  ShowBreadCrumbs: true
+  ShowCodeCopyButtons: true
+  ShowWordCount: true
+  ShowToc: true
+  TocOpen: false
+
+  # 头像 + 侧边栏（homeInfo mode）
+  homeInfoParams:
+    Title: "高三小祥的博客"
+    Content: "Just do it."
+
+  # 侧边栏头像
+  label:
+    text: "高三小祥"
+    icon: img/about-BY-gentle.jpg
+    iconHeight: 35
+
+  # 社交图标（知乎不在官方列表，需自定义）
+  socialIcons:
+    - name: github
+      url: "https://github.com/jmc0x68"
+    - name: zhihu
+      url: "https://www.zhihu.com/people/jmc0x68"
+
+  # 封面图默认隐藏
+  cover:
+    hidden: false
+    hiddenInList: false
+    hiddenInSingle: false
+
+  # 编辑链接
+  editPost:
+    URL: "https://github.com/jmc0x68/h3saki_blog/content"
+    Text: "Suggest Changes"
+    appendFilePath: true
+
+menu:
+  main:
+    - identifier: posts
+      name: 文章
+      url: /posts/
+      weight: 10
+    - identifier: tags
+      name: 标签
+      url: /tags/
+      weight: 20
