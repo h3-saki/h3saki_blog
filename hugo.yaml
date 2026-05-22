@@ -21,8 +21,6 @@ minify:
 # 参考: https://gohugo.io/content-management/mathematics/
 markup:
   goldmark:
-    renderer:
-      unsafe: true
     extensions:
       passthrough:
         enable: true
