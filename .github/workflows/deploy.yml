@@ -50,5 +50,5 @@ jobs:
           EDGEONE_API_TOKEN: ${{ secrets.EDGEONE_API_TOKEN }}
         run: |
           npx edgeone pages deploy ./public \
-            -n "h3-saki-blog" \
+            -n "h3saki-blog" \
             -t "$EDGEONE_API_TOKEN"
