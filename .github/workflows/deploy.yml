@@ -17,18 +17,18 @@ jobs:
       - name: Compress cover images
         run: |
           sudo apt-get install -y pngquant
-          find ./img -type f \( -iname "*.jpg" -o -iname "*.jpeg" \) \
+          find ./static/img -type f \( -iname "*.jpg" -o -iname "*.jpeg" \) \
             -exec mogrify -resize "1400x>" -quality 72 {} \;
-          find ./img -type f -iname "*.png" \
+          find ./static/img -type f -iname "*.png" \
             -exec pngquant --quality=65-80 --ext .png --force {} \;
       
       - name: Optimize content images
         run: |
           find . -type f \( -iname "*.jpg" -o -iname "*.jpeg" \) \
-            -not -path "./img/*" -not -path "./_site/*" -not -path "./vendor/*" \
+            -not -path "./static/img/*" -not -path "./_site/*" -not -path "./vendor/*" \
             -exec mogrify -quality 85 {} \; 2>/dev/null || true
           find . -type f -iname "*.png" \
-            -not -path "./img/*" -not -path "./_site/*" -not -path "./vendor/*" \
+            -not -path "./static/img/*" -not -path "./_site/*" -not -path "./vendor/*" \
             -exec mogrify -quality 90 {} \; 2>/dev/null || true
 
       - name: Setup Hugo
