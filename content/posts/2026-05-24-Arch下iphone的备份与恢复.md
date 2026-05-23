@@ -2,7 +2,7 @@
 share: true
 title: Arch下iphone的备份与恢复
 description: 基于pymobiledivice3的备份,刷机与恢复教程
-date: 2026-05-24T12:00:00+08:00
+date: 2026-05-24T00:00:00+08:00
 author: Saki酱的通信学习之路
 cover:
   image: img/arisa_cover1.png
