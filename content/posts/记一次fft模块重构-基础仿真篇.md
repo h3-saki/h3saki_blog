@@ -14,10 +14,6 @@ tags:
   - FFT
   - Python
   - 仿真
-zhihu-title: 记一次fft模块重构-基础仿真篇
-zhihu-topics:
-  - "#快速傅里叶变换FFT"
-zhihu-link: https://zhuanlan.zhihu.com/p/2049330501907919105/edit
 ---
 
 ## 1.前言
