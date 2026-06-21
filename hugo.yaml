@@ -25,6 +25,7 @@ markup:
   goldmark:
     renderer:
       unsafe: true
+      hardWarps: true
     extensions:
       passthrough:
         enable: true
