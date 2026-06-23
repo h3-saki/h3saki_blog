@@ -1,0 +1,473 @@
+---
+title: 记一次fft重构-矫正算法重构篇
+description: 对于插值算法的重构
+date: 2026-06-24T00:00:00+08:00
+author: Saki酱的通信学习之路
+cover:
+  image: img/huaguan.png
+cover_image: "[[huaguan.png]]"
+catalog: true
+share: true
+path: 2026-06-24-记一次fft重构-矫正算法重构篇.md
+tags:
+  - Saki酱的电赛备赛记录
+  - DSP
+  - FFT
+  - Python
+  - 仿真
+  - 插值算法
+---
+
+# 1.前言
+在上一节中,我们为fft模块简单的添加了抛物线插值算法,并且衡量了插值算法对不同频率差的幅度与频率的估计情况。然而,在与AI的多轮对线之下,我了解到: 不同窗函数适用的插值算法不同。这就意味着,原来设计的架构(基于算法进行的分类)并不适用。我们需要基于窗函数,对幅值矫正算法重新分类。同时,为矫正算法模块加入相位估计算法,以应对2025-G题(电路模型探究装置)这种需要相位谱(复数谱)的情形。
+
+# 2.整体架构
+## 2.1输出规范
+得益于写抛物线插值时就考虑到了将来需要加入其他频率估计算法的情形。所以之前已经有了统一接口:
+```python
+@dataclass
+class EstimateData:
+    freq_estimated: float
+    amplitude_estimated: float
+```
+加入相位数据只需要在下方加入
+```python
+phase_estimated: float
+```
+即可。
+## 2.2 整体架构
+如同《Head First 设计模式》中提到的, 程序的设计模式,应该面向修改关闭,面向拓展开放。面向不变关闭,面向变化打开。这有点类似与《矛盾论》 中提到的"抓主要矛盾"的哲学思想。在本程序中,我们注意到,其变化量有两个: 窗函数(Window function), 插值算法。因此,我们应该面向这两个变化量留出拓展的余地,将窗函数和插值算法解耦,而面向其他无关紧要的细节,我们可以写成紧耦合的算法。
+但现在有以下几个问题:
+1. 原有的抛物线算法适用于所有窗函数,只不过估计精度不同。
+2. 所有窗函数适用的相位矫正算法都相同,但是频差与幅值估计算法均不同
+3. 一个窗函数可能有好几种不同的频差估计算法(如矩形窗就有rife和cadan两种频差估计算法),但不是所有算法都适用与某个窗函数。
+4. 原有的`no_interp` 和 `parabolic_interp`函数是紧耦合的,输入复数谱,频率bin,采样率,采样点数,相干增益后直接输出EstimateData,和新算法(将频率,幅值,相位估计算法拆分成不同函数)的写法有很大不同。
+首先,对于问题4,我们采取了简单直接的做法: 构造一个抽象的(通用的)函数`estimate_freq_amplitude_phase()`,并将其他频率估计函数设置为私有函数,以免产生错误调用。
+对于问题4,我在抽象函数`estimate_freq_amplitude_phase()`中,选择了使用选择分支来解决这个问题,因为旧的模式不会再增加,之后的代码架构一定是新的算法模式,因此我们直接采用了这种紧耦合的方法,不过这对我们后续的拓展毫无影响。
+其次,对于问题2-3,我们采用了较为复杂的策略模式来实现。选择策略模式是因为其能较为简单的在嵌入式C代码中实现(使用结构体或swich-case方式达到类似的效果)
+我的办法是使用了四个字典来满足我的调用要求:每种窗函数只能调用对应的算法,不能调用适用于其他窗函数的算法。以下为字典列表
+由于幅值估计算法每一个窗只有一个,所以只用维护一个算法列表即可。
+```python
+_AMP_METHODS = {
+        "rect": _amp_rect,
+        "hann": _amp_hann,
+        "hamming": _amp_hamming,
+        "blackman": _amp_blackman,
+        "blackmanharris": _amp_blackmanharris,
+        "flattop": _amp_flattop
+        }
+```
+频差估计算法,这个用了三个算法字典,每个字典的作用分别为auto模式下调用的插值算法,不同窗函数能调用的插值算法表,所有算法对应的函数指针(python字典的值能设置为函数,这里姑且不严谨的叫它指针)
+```python
+_DELTA_METHODS = {
+        "rife": _delta_rect_rife,
+        "cadan": _delta_rect_candan,
+        "granke": _delta_hann_grandke,
+        "offelli": _delta_hamming_offelli,
+        "andria_blackman": _delta_blackman_andria,
+        "agrez": _delta_blackmanharris_agrez,
+        "andria_flattop": _delta_flattop_andria
+        }
+```
+所有的插值算法列表
+```python
+_AUTO_DELTA_METHODS = { #自动窗函数选择表
+        "rect": "cadan",
+        "hann": "granke",
+        "hamming": "offelli",
+        "blackman": "andria_blackman",
+        "blackmanharris": "agrez",
+        "flattop": "andria_flattop"
+        }
+```
+auto模式下,不同窗函数选择的频率差估计算法
+```python
+_WINDOW_CHECK_LIST = { #查看用户是否选择错了窗函数算法
+        "rect": ["rife", "cadan"],
+        "hann": ["granke"],
+        "hamming": ["offelki"],
+        "blackman": ["andria_blackman"],
+        "blackmanharris": ["agrez"],
+        "flattop": ["andria_flattop"]
+        }
+```
+用于检测用户是否选择错了窗函数算法,如果选择错了,就报错
+接着是这些算法的实现,我说实话大部分都没有什么意思,基本上都是对着公式写代码,没有半点数据结构。其中δ为频率差,A为幅值。
+为了简便,我们做以下符号约定。
+X为FFT后得到的复数谱,$\omega$ 为窗函数
+
+| 符号       | 含义                                                                                                                                                           |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| $k_0$    | 幅度谱峰值索引                                                                                                                                                      |
+| $r$      | $$<br>=\begin{equation}<br>    \begin{cases}<br>	1\quad X[k_0 + 1] ≥ X[K_0-1]\\<br>	-1\quad X[k_0 + 1] ≥ X[K_0-1]<br>    \end{cases}<br>\end{equation}<br>$$ |
+| $\alpha$ | $\frac{\|X[k_0+r]\|}{\|X[k_0]\|}$                                                                                                                            |
+| $\delta$ | 频偏因子 ∈ [-0.5,0.5]                                                                                                                                            |
+| CG       | 相干增益 Coherent Gain,可以通过查窗函数表,或者算窗函数均值获得                                                                                                                      |
+定义函数$sinc(\delta) = \frac{\pi \delta}{sin(\pi \delta)}$ 
+>注:sinc函数就是矩形窗/冲激在频域上的幅频响应曲线
+
+| 窗函数             | 算法名称            | δ计算公式                                                                                               | A计算公式                                                                                                                                                                                                                                               |
+| --------------- | --------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| rect            | rife(幅度谱)       | $\delta = r \cdot \frac{\alpha}{1+\alpha}$                                                          | $A = \frac {2\|X[k_0]\|}{N} \cdot sinc(\delta)$                                                                                                                                                                                                     |
+| rect            | cadan(复数谱)      | $\delta = \cal{R}\left\{\frac{X[k_0-1] - X[k_0+1]}{2X[k_0] - X[k_0-1] - X[k_0 + 1]}\right\}$        | 同上                                                                                                                                                                                                                                                  |
+| Hann            | Grandke         | $\delta = r \cdot \frac{2\alpha - 1}{\alpha + 1}$                                                   | $A = \frac{2\|X[k_0]\|}{N \cdot CG} \cdot sinc(\delta) \cdot (1 - \delta^2)$                                                                                                                                                                        |
+| Hamming         | Offelli & Petri | $\delta = r \cdot \frac{\alpha - 0.54}{0.46\alpha + 0.54}$                                          | $A = \frac{2\|X[k_0]\|}{N \cdot CG} \cdot sinc(\delta) \cdot \frac{1 - \delta^2}{1 - 0.148 \delta^2} \approx \frac{3.704\|X[k_0]}{N} \cdot sinc(\delta) \cdot (1 - \delta^2)$<br>($\frac{2}{N \cdot CG} \approx 3.704$)                             |
+| Blackman        | Andira          | $\delta \approx r \cdot \frac{3\alpha - 1.5}{\alpha + 1.5}$<br>($\|\delta\| < 0.4$时$误差 < 0.001bin$) | $A = \frac{2\|X[k_0]\|}{N \cdot CG} \cdot sinc(\delta) \frac{(1 - \delta^2)(4 - \delta^2)}{4 - 1.69\delta^2} \approx \frac{4.762\|X[k_0]\|}{N} \cdot sinc(\delta) \cdot (1 - \delta^2)(1 - 0.25\delta^2)$<br>($\frac{2}{N \cdot CG} \approx 4.762$) |
+| Blackman-Harris | Agrez           | $\delta \approx r \cdot \frac{4\alpha - 2}{\alpha + 2}$                                             | $A \approx \frac{5.575\|X[k_0]\|}{N} \cdot sinc(\delta) \cdot (1 - \delta^2)(1 - 0.25\delta^2)(1 - 0.111\delta^2)$<br>($\frac{2}{N \cdot CG} \approx 5.575$)                                                                                        |
+| Flattop         | Andria          | $\delta \approx \frac{5.5\alpha - 4.5}{\alpha + 1}$<br>(粗近似)                                        | $A \approx \frac{2\|X[k_0]\|}{N \cdot CG} \cdot (1 + 0.02\delta^2 + 0.0005\delta^4)$                                                                                                                                                                |
+>注:Flattop由于mainlobe较宽所以算法只能粗略估计频差δ
+>注: 幅度矫正公式 $\frac{2|X[k_0]|}{N \cdot CG}$是实信号的情况(由于实信号的共轭对称性),如果是复信号,这一项应该变为 $\frac{|X[k_0]|}{N \cdot CG}$
+
+相位矫正公式
+$\phi = \angle X[k_0] - \pi \delta \cdot \frac{N - 1}{N}$
+
+>注:这里统一的抽象插值函数选择了输入复数谱,首先是因为对于矩形窗,Candan算法需要用到复数谱。其次是在MCU中,这样的好处是我们不需要另外一个幅度谱数组(只需要一个原始FFT复数谱数组),只需要在计算的时候计算复数模长即可。
+
+## 2.3 对复频谱的处理
+在调试过程中,发现了一个新问题:原本处理实信号的算法只取幅度谱$[\frac{N}{2},N-1]$这个区间内的点(索引从零开始),但是引入复数谱之后,就开始带来一个问题:以1024点为例,原始复数谱的点数为1024点(按numpy数组而非cmsis数组),而幅度谱只取了其中的512-1023这部分。其实如果只看实信号,这是一个非常简单的问题,只需要将输入幅度谱的bin索引+512即可解决问题。
+但是,之前所有FFT后处理模块,如查找频谱峰等,都具有查询双边谱的条件。为此,我决定:让插值模块输出原始的双边频率(正频率或负频率), 以添加对复信号处理的兼容性。
+首先要处理的是幅度矫正函数,由于实信号的共轭对称性,所以实信号的幅度矫正因子和复信号不一样(是复信号的两倍,具体看上面的注解)
+因此,我们将之前公式中的所有系数2去掉。
+同时,因为原始的频率谱(未经过fftshift)时是这样一个状态,假设是1024点的fft,那么经过fft处理后,我们的频率正半轴$[0,\frac{f_s}{2}]$,在$[0:513]$ 这个序列当中,而$[513:]$ 为负频率序列。因此,当信号索引$k_0$大于512时,频率bin的计算公式变成 $f_s = (\frac{2}{N} - k_0) \cdot \frac{f_s}{N}$,带上频差估计$\delta$变为: $f_s = (\frac{2}{N} - k_0 + \delta) \cdot \frac{f_s}{N}$.
+这里还是$+\delta$的原因是负半轴的坐标顺序是从$(-\frac{f_s}{2N},0)$,因此,在正半轴时,如果频偏是向正方向移动的,对应的就是频偏向负半方向移动,对应的$k'_{0} = k_0 - \delta$ ,代入上面的换算公式就能得到以上的式子
+原始的用于处理实信号(只有正频率)的`freq_estimated`如
+```python
+estimated_freq = (peak_bin + estimated_freq_delta) * (fs_hz / n_pts)
+```
+那么这样,我们在此加入一个条件判定即可
+```python
+if peak_bin > n_pts // 2:
+	peak_bin = (n_pts // 2) - peak_bin
+estimated_freq = (peak_bin + estimated_freq_delta) * (fs_hz / n_pts)
+```
+这样,我们就能正确的输出负频率了。对于正负频率的处理,我们应该将这个工作放到其他模块,而不是这个矫正算法模块中。
+# 3.测试结果
+仿照抛物线插值算法的测试流程,以下为测试项目:
+- **扫频测试**:绘制频偏-RMSE曲线,反应频率估计值,幅度估计值随频率偏差的变化,扫频测试中,生成的测试信号采样率为1Mhz,采样点数1024点,量化精度16bit,SNR=10,相位随机变化(因为根据相位矫正公式可以知道相位的误差跟原始相位无关)$\phi ∈ [0,2\pi]$测试范围为$\delta  \in [0.0 , 0.5)$ 步长0.01(单位:bin)
+ - **SNR测试**: 绘制SNR-RMSE曲线,反应频率估计值和幅度估计值随SNR的变化,生成的信号频偏$\delta = 0.3 bin$ ,采样率1Mhz,采样点数1024点,量化精度16bit,测试范围$SNR \in [0.0,60)$ ,步长5dB。
+ 
+ >注:测试中的幅度rmse采用了一种特别的计算方法,由于最开始的信号序列经过16bit量化,所以这里为了更直观采用了一种特殊的"归一化幅值",即将rmse除以$2^{16}$ 来更直观的体现幅值误差。这种计算方式也适用与下文中的SNR测试结果
+ >注2:以下图中相位测试结果单位为rads
+## 3.1 矩形窗测试
+### 3.1.0 抛物线插值算法
+#### 3.1.0.1 频偏-频率rmse
+![rect-parabolic-freqsweep-freqrmse.png](rect-parabolic-freqsweep-freqrmse.png)
+矩形窗下,抛物线插值法造成的频率估计偏差较高。
+
+#### 3.1.0.2 频偏-幅度rmse
+![rect-para-freqsw-amprmse.png](rect-para-freqsw-amprmse.png)
+
+#### 3.1.0.3 频偏-相位rmse
+![rect-para-freqsw-phasermse.png](rect-para-freqsw-phasermse.png)
+
+#### 3.1.0.4 SNR-频率rmse
+![rect-para-snr-freq.png](rect-para-snr-freq.png)
+
+#### 3.1.0.5 SNR-幅度rmse
+![rect-para-snr-freq 1.png](rect-para-snr-freq%201.png)
+
+#### 3.1.0.6 频偏-相位rmse
+![rect-para-snr-phase.png](rect-para-snr-phase.png)
+
+综合上面的图像可以看出,矩形窗在抛物线插值算法下的频率,幅度,相位估计均表现不佳。抛物线插值算法并不适用与矩形窗。
+
+### 3.1.1 Rife算法
+#### 3.1.1.1 频偏-频率rmse
+![rect-rife-freq-freq.png](rect-rife-freq-freq.png)
+
+#### 3.1.1.2 频偏-幅值rmse
+![rect-rife-freq-amp.png](rect-rife-freq-amp.png)
+
+#### 3.1.1.3 频偏-相位rmse
+![rect-rife-freq-phase.png](rect-rife-freq-phase.png)
+
+#### 3.1.1.4 SNR-频率rmse
+![rect-rife-snr-freq.png](rect-rife-snr-freq.png)
+
+#### 3.1.1.5 SNR-幅度rmse
+![rect-rife-snr-amp.png](rect-rife-snr-amp.png)
+
+#### 3.1.1.6 SNR-相位RMSE
+![rect-rife-snr-phase.png](rect-rife-snr-phase.png)
+
+Rife算法相比于抛物线算法,在频率,幅值上都有较大进步,应付像2023H:信号分离装置这种题已经是绰绰有余了(最多70Hz的频差,幅度差也小的可怜,基本上完全能够分离)。但是相位估计上差的比较多(大约相当于0.07pi),只能说是可堪一用的水平
+### 3.1.2 Cadan算法
+
+#### 3.1.2.1 频偏-频率rmse
+![rect-candan-freq-freq.png](rect-candan-freq-freq.png)
+
+#### 3.1.2.1 频偏-幅度rmse
+![rect-candan-freq-amp.png](rect-candan-freq-amp.png)
+
+#### 3.1.2.3 频偏-相位rmse
+![rect-candan-freq-phase.png](rect-candan-freq-phase.png)
+
+#### 3.1.2.4 SNR-频率rmse
+![rect-candan-snr-freq.png](rect-candan-snr-freq.png)
+
+#### 3.1.2.5 SNR-幅度rmse
+![rect-candan-snr-amp.png](rect-candan-snr-amp.png)
+
+#### 3.1.2.6 SNR-相位rmse
+![rect-candan-snr-phase.png](rect-candan-snr-phase.png)
+cadan算法使用复数谱进行频率估计和幅度估计,可以看出估计精度相比于一般的抛物线插值算法已经极大的提高。相位水平也可堪一用。整体水平与hann窗的抛物线插值算法水平相当,甚至在频率估计和相位估计方面略强于hann窗。
+## 3.2 hann窗测试
+### 3.2.0 抛物线插值算法
+#### 3.2.0.1 频偏-频率rmse
+![hann-para-freq-freq.png](hann-para-freq-freq.png)
+
+#### 3.2.0.2 频偏-幅度rmse
+
+![hann-para-freq-amp.png](hann-para-freq-amp.png)
+
+#### 3.2.0.3 频偏-相位rmse
+![hann-para-freq-phase.png](hann-para-freq-phase.png)
+
+#### 3.2.0.4 SNR-频率rmse
+
+![hann-para-snr-freq 1.png](hann-para-snr-freq%201.png)
+
+#### 3.2.0.5 SNR-幅度rmse
+
+![hann-para-snr-amp.png](hann-para-snr-amp.png)
+
+#### 3.2.0.6 SNR-相位rmse
+![hann-para-snr-phase.png](hann-para-snr-phase.png)
+
+### 3.2.1 granke算法
+#### 3.2.1.1 频差-频率rmse
+![hann-off-freq-freq.png](hann-off-freq-freq.png)
+
+#### 3.2.1.2 频差-幅值rmse
+![hann-off-freq-amp 1.png](hann-off-freq-amp%201.png)
+
+#### 3.2.1.3 频差-相位rmse
+![hann-off-freq-phase.png](hann-off-freq-phase.png)
+
+#### 3.2.1.4 SNR-频率rmse
+![hann-snr-freq.png](hann-snr-freq.png)
+
+#### 3.2.1.5 SNR-幅度rmse
+![hann-off-snr-amp.png](hann-off-snr-amp.png)
+
+#### 3.2.1.6 SNR-相位rmse
+![hann-off-snr-phase 1.png](hann-off-snr-phase%201.png)
+
+更换算法之后,可以明显看出频率,幅值,相位的估计均有改善,在高snr的情况下,频率rmse甚至能到1hz左右。不过后面几个窗更换算法的效果,反而还不如抛物线插值。不清楚原因是什么。
+
+## 3.3 hamming窗
+### 3.3.0 抛物线插值
+#### 3.3.0.1频偏-频率rmse
+
+![hamming-para-freq-freq.png](hamming-para-freq-freq.png)
+
+#### 3.3.0.2 频偏-幅度rmse
+
+![hamming-para-freq-amp.png](hamming-para-freq-amp.png)
+
+#### 3.3.0.3 频偏-相位rmse
+
+![hamming-para-freq-phase.png](hamming-para-freq-phase.png)
+
+#### 3.3.0.4 SNR-频率rmse
+
+![hamming-para-snr-freq.png](hamming-para-snr-freq.png)
+
+#### 3.3.0.5 SNR-幅度rmse
+
+![hamming-para-snr-amp.png](hamming-para-snr-amp.png)
+
+#### 3.3.0.6 SNR-相位rmse
+
+![hamming-para-snr-phase.png](hamming-para-snr-phase.png)
+不如hann窗
+### 3.3.1 offelli算法
+#### 3.3.1.1 频偏-频率rmse
+![hamming-off-freq-freq.png](hamming-off-freq-freq.png)
+
+#### 3.3.1.2 频偏-幅度rmse
+![hamming-off-freq-amp.png](hamming-off-freq-amp.png)
+
+#### 3.3.1.3 频偏-相位rmse
+![hamming-off-freq-phase.png](hamming-off-freq-phase.png)
+
+#### 3.3.1.4 SNR-频率rmse
+
+![hamming-off-snr-freq 1.png](hamming-off-snr-freq%201.png)
+
+#### 3.3.1.5 SNR-幅度rmse
+
+![hamming-off-snr-amp 2.png](hamming-off-snr-amp%202.png)
+
+#### 3.3.1.5 snr-相位rmse
+
+![hamming-off-snr-phase.png](hamming-off-snr-phase.png)
+不如上面那个抛物线插值,一坨,我怀疑过我的算法写错了,但是ai帮我查过文献了确实是这个公式。
+
+## 3.4 Blackman窗
+### 3.4.1 抛物线插值算法
+#### 3.4.1.1 频偏-频率rmse
+
+![blackman-para-freq-freq.png](blackman-para-freq-freq.png)
+
+#### 3.4.1.2 频偏-幅值rmse
+
+![blackman-para-freq-amp.png](blackman-para-freq-amp.png)
+
+#### 3.4.1.3 频偏-相位rmse
+
+![blackman-para-freq-phase.png](blackman-para-freq-phase.png)
+
+#### 3.4.1.4 SNR-频率rmse
+
+![blackman-para-snr-freq.png](blackman-para-snr-freq.png)
+
+#### 3.4.1.5 SNR-幅值rmse
+
+![blackman-para-snr-amp.png](blackman-para-snr-amp.png)
+
+#### 3.4.1.6 SNR-相位rmse
+
+![blackman-para-snr-phase.png](blackman-para-snr-phase.png)
+
+### 3.4.2 adria算法
+#### 3.4.2.1 频偏-频率rmse
+
+![blackman-adr-freq-freq.png](blackman-adr-freq-freq.png)
+
+#### 3.4.2.2 频偏-幅值rmse
+
+![blackman-adr-freq-amp.png](blackman-adr-freq-amp.png)
+
+#### 3.4.2.3 频偏-相位rmse
+
+![blackman-adr-freq-phase.png](blackman-adr-freq-phase.png)
+
+#### 3.4.2.4 SNR-频率rmse
+
+![blackman-adr-snr-freq.png](blackman-adr-snr-freq.png)
+
+#### 3.4.2.5 SNR-幅度rmse
+
+![484](blackman-adr-snr-amp.png)
+
+#### 3.4.2.6 SNR-相位rmse
+
+![blackman-adr-snr-phase.png](blackman-adr-snr-phase.png)
+
+频差100Hz左右,相位差0.3几,不如矩形窗都,我感觉后续的测试结果都没有什么展示的必要,但是出于对文章完整性的尊重,这里也一并展示。
+
+## 3.5 Blackmanharris窗
+#### 3.5.1 抛物线插值算法
+
+#### 3.5.1.1 频偏-频率rmse
+
+![blackmanharris-para-freq-freq.png](blackmanharris-para-freq-freq.png)
+
+#### 3.5.1.2 频偏-幅度rmse
+
+![blackmanharris-para-frerq-amp.png](blackmanharris-para-frerq-amp.png)
+
+#### 3.5.1.3 频偏-相位rmse
+
+![blackmanharris-para-freq-phase.png](blackmanharris-para-freq-phase.png)
+
+#### 3.5.1.4 SNR-频率rmse
+
+![blackmanharris-para-snr-freq.png](blackmanharris-para-snr-freq.png)
+
+#### 3.5.1.5 SNR-幅度rmse
+
+![blackmanharris-para-snr-amp.png](blackmanharris-para-snr-amp.png)
+
+#### 3.5.1.6 SNR-相位rmse
+
+![blackmanharris-para-snr-phase.png](blackmanharris-para-snr-phase.png)
+
+### 3.5.2 agrez算法
+
+#### 3.5.2.1 频偏-频率rmse
+
+![blackmanharris-agr-freq-freq.png](blackmanharris-agr-freq-freq.png)
+
+#### 3.5.2.2 频偏-幅值rmse
+
+![blackmanharris-agr-freq-amp 2.png](blackmanharris-agr-freq-amp%202.png)
+
+#### 3.5.2.3 频偏-相位rmse
+
+![blackmanharris-agr-freq-phase.png](blackmanharris-agr-freq-phase.png)
+
+#### 3.5.2.4 SNR-幅度rmse
+
+![blackmanharris-agr-snr-amp.png](blackmanharris-agr-snr-amp.png)
+
+#### 3.5.2.5 SNR-相位rmse
+
+![blackmanharris-agr-snr-phase.png](blackmanharris-agr-snr-phase.png)
+
+这个也是,频率和相位飞到不知道哪里去了,只有幅值勉强能看,感觉不如抛物线。
+
+## 3.6 flattop窗
+这个窗函数其实因为mainlobe太宽了没什么差值的必要,不过仍然可以看一下。
+### 3.6.1 抛物线插值
+
+#### 3.6.1.1 频偏-频率rmse
+
+![flattop_para_freq_freq.png](flattop_para_freq_freq.png)
+
+#### 3.6.1.2 频偏-幅值rmse
+
+![flattop_para_freq_amp.png](flattop_para_freq_amp.png)
+
+#### 3.6.1.3 频偏-相位rmse
+
+![flattop_para_freq_amp 1.png](flattop_para_freq_amp%201.png)
+
+#### 3.6.1.4 SNR-频率rmse
+
+![flattop_and_snr_freq.png](flattop_and_snr_freq.png)
+
+#### 3.6.1.5 SNR-幅度rmse
+
+![flattop_para_snr_amp.png](flattop_para_snr_amp.png)
+
+#### 3.6.1.6 SNR-相位rmse
+
+![flattop_para_snr_phase.png](flattop_para_snr_phase.png)
+
+### 3.6.2 andria算法
+#### 3.6.2.1 频偏-频率rmse
+![flattop_and_freq_freq.png](flattop_and_freq_freq.png)
+
+
+#### 3.6.2.2 频偏-幅值rmse
+
+![flattop_and_freq_amp.png](flattop_and_freq_amp.png)
+
+#### 3.6.2.3 频偏-相位rmse
+
+![flattop_and_freq_phase.png](flattop_and_freq_phase.png)
+
+#### 3.6.2.4 SNR-频率rmse
+
+![flattop_and_snr_freq 1.png](flattop_and_snr_freq%201.png)
+
+#### 3.6.2.5 SNR-幅度rmse
+
+![flattop_and_snr_amp.png](flattop_and_snr_amp.png)
+
+#### 3.6.2.6 SNR-相位rmse
+
+![flattop_and_snr_phase.png](flattop_and_snr_phase.png)
+
+可以看到,在矫正算法的加持下,牺牲mainlobe宽度换取幅值精度的flattop函数的矫正幅值,甚至还稍逊于hann窗。
+
+# 4. 总结
+根据以上测试可以看出,电赛的大部分情况下,选hann窗+granke算法,就能获得较为良好的频率,幅值与相位估计。如果不希望使用窗函数,也可以选择rect(不加窗)+candan算法。
+
+
+## 版权声明
+
+[记一次fft重构-矫正算法重构篇](https://blog.05262025.xyz/posts/2026-06-24-记一次fft重构-矫正算法重构篇/) © 2026 by [高三小祥](https://github.com/jmc0x68) is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+文中所有图片著作权均归版权方所有
